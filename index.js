@@ -3,17 +3,21 @@ const cors = require('cors');
 const admin = require('firebase-admin');
 const { Client, GatewayIntentBits } = require('discord.js');
 
+// 1. Initialize Firebase
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
+// 2. Setup Express App
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const activeBots = {};
 
-/* 1. INTERNAL BOT (VoxBot) */
+/* ============================================================
+   INTERNAL BOT (VoxBot)
+   ============================================================ */
 app.post('/api/bot', async (req, res) => {
     const { text, sender, groupId, serverId, channel } = req.body;
     let reply = null;
@@ -28,46 +32,47 @@ app.post('/api/bot', async (req, res) => {
     res.status(200).send('OK');
 });
 
-/* 2. INCOMING WEBHOOK */
+/* ============================================================
+   INCOMING WEBHOOK (For 3rd Party Bots / Hacker Bot)
+   ============================================================ */
 app.post('/api/incoming-webhook', async (req, res) => {
     const { text, sender, secret, serverId, channel } = req.body;
-    if (secret !== process.env.WEBHOOK_SECRET) return res.status(401).send('Unauthorized');
-    if (!text || !serverId || !channel) return res.status(400).send('Missing data');
 
+    if (secret !== process.env.WEBHOOK_SECRET) {
+        return res.status(401).send('Unauthorized: Wrong secret password');
+    }
+    if (!text || !serverId || !channel) {
+        return res.status(400).send('Missing text, serverId, or channel');
+    }
     try {
         await db.collection('vox_messages').add({
             sender: sender || 'External Bot 🤖',
             senderUid: 'external_bot',
-            text: text, serverId: serverId, channel: channel,
+            senderPhoto: 'https://api.dicebear.com/7.x/bottts/svg?seed=External',
+            text: text,
+            serverId: serverId,
+            channel: channel,
             timestamp: admin.firestore.FieldValue.serverTimestamp()
         });
-        res.status(200).send('Sent! 🚀');
-    } catch (error) { res.status(500).send('Error'); }
-});
-
-/* 3. IMPORT A DISCORD BOT (Manual Button) */
-app.post('/api/import-discord-bot', async (req, res) => {
-    const { botToken, voxServerId, voxChannelId } = req.body;
-    if (!botToken || !voxServerId || !voxChannelId) return res.status(400).send('Missing data');
-
-    try {
-        await startDiscordBridge(botToken, voxServerId, voxChannelId);
-        res.status(200).send(`Successfully imported Discord bot!`);
+        res.status(200).send('Message sent to Vox! 🚀');
     } catch (error) {
-        res.status(500).send('Failed to import bot.');
+        console.error(error);
+        res.status(500).send('Database error');
     }
 });
 
-/* 4. AUTO-START DISCORD BOT ON SERVER BOOT */
+/* ============================================================
+   THE DISCORD BRIDGE FUNCTION
+   ============================================================ */
 async function startDiscordBridge(token, serverId, channelId) {
     if (!token || !serverId || !channelId) return;
-    
+
     const discordBot = new Client({ 
         intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] 
     });
 
     discordBot.on('ready', () => {
-        console.log(`Auto-Bridge logged in as ${discordBot.user.tag}! Listening to Discord...`);
+        console.log(`✅ Auto-Bridge logged in as ${discordBot.user.tag}! Listening to Discord...`);
     });
 
     discordBot.on('messageCreate', async message => {
@@ -89,12 +94,37 @@ async function startDiscordBridge(token, serverId, channelId) {
     activeBots[token] = discordBot;
 }
 
-// Start the bot automatically if the environment variables exist
+/* ============================================================
+   IMPORT DISCORD BOT (Manual trigger from Vox UI)
+   ============================================================ */
+app.post('/api/import-discord-bot', async (req, res) => {
+    const { botToken, voxServerId, voxChannelId } = req.body;
+
+    if (!botToken || !voxServerId || !voxChannelId) {
+        return res.status(400).send('Missing botToken, voxServerId, or voxChannelId');
+    }
+
+    try {
+        await startDiscordBridge(botToken, voxServerId, voxChannelId);
+        res.status(200).send(`Successfully imported Discord bot!`);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send('Failed to import bot. Check if the token is correct.');
+    }
+});
+
+/* ============================================================
+   AUTO-START ON BOOT (Checks Environment Variables)
+   ============================================================ */
 if (process.env.DISCORD_TOKEN && process.env.VOX_BRIDGE_SERVER_ID && process.env.VOX_BRIDGE_CHANNEL_ID) {
+    console.log("Found Discord environment variables. Starting auto-bridge...");
     startDiscordBridge(process.env.DISCORD_TOKEN, process.env.VOX_BRIDGE_SERVER_ID, process.env.VOX_BRIDGE_CHANNEL_ID);
 } else {
     console.log("No Discord auto-bridge environment variables found. Waiting for manual import.");
 }
 
+/* ============================================================
+   START SERVER
+   ============================================================ */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
