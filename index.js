@@ -35,11 +35,9 @@ app.post('/api/incoming-webhook', async (req, res) => {
     if (secret !== process.env.WEBHOOK_SECRET) {
         return res.status(401).send('Unauthorized: Wrong secret password');
     }
-
     if (!text || !serverId || !channel) {
         return res.status(400).send('Missing text, serverId, or channel');
     }
-
     try {
         await db.collection('vox_messages').add({
             sender: sender || 'External Bot 🤖',
