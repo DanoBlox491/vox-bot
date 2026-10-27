@@ -1,4 +1,4 @@
-const express = require('express');
+// Vox Bot Backend - Discord Bridge Activeconst express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { Client, GatewayIntentBits } = require('discord.js');
